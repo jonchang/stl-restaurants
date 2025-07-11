@@ -13,6 +13,7 @@ import requests
 GeocodeResult = namedtuple("GeocodeResult", ["lat", "lon", "geocode_score", "result_name", "geocoder"])
 
 API_USER_EMAIL = run(["git", "config", "--get", "user.email"], capture_output=True, text=True).stdout.strip()
+RESERVED_FIELDS = {"lat", "lon", "result_name", "geocode_score", "geocoder"}
 
 def possibly_strip_city(address):
     """The STL City geocoder assumes that all of its inputs are in St. Louis City, so try to detect and strip that out if it's present."""
@@ -51,7 +52,8 @@ def geocode_stl_batch(addresses):
     }
     response = requests.post(base_url, data=params)
     data = json.loads(response.text)
-    for location in data["locations"]:
+    # Must sort by ResultID to match up the results with the input addresses.
+    for location in sorted(data["locations"], key=lambda x: x["attributes"]["ResultID"]):
         yield GeocodeResult(
             lat=location["location"]["y"],
             lon=location["location"]["x"],
@@ -131,14 +133,13 @@ def geocode(addresses):
 def main(jsonl: Path, output: Path):
     output_data = []
     addresses_to_geocode = []
-    reserved_fields = {"lat", "lon", "result_name", "geocode_score", "geocoder"}
 
     # First pass: read the input file and collect the addresses to geocode.
     with jsonl.open() as f:
         for line in f:
             data = json.loads(line)
-            if reserved_fields.intersection(data.keys()):
-                raise ValueError(f"Input data contains reserved fields: {reserved_fields.intersection(data.keys())}")
+            if RESERVED_FIELDS.intersection(data.keys()):
+                raise ValueError(f"Input data contains reserved fields: {RESERVED_FIELDS.intersection(data.keys())}")
             addresses_to_geocode.append(data["location"])
             output_data.append(data)
 
@@ -159,7 +160,7 @@ def main(jsonl: Path, output: Path):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("jsonl", help="JSONL file to geocode. It should have a 'location' field; the other fields will be ignored and passed through to the output", type=Path)
+    parser.add_argument("jsonl", help="JSONL file to geocode. It should have a 'location' field; the other fields will be ignored and passed through to the output. Errors on reserved fields: " + ", ".join(RESERVED_FIELDS), type=Path)
     parser.add_argument("-o", "--output", help="Output jsonl file to write geocoded data to", type=Path, required=True)
     args = parser.parse_args()
     main(args.jsonl, args.output)
